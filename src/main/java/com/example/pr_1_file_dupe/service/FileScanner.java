@@ -2,157 +2,215 @@ package com.example.pr_1_file_dupe.service;
 
 import com.example.pr_1_file_dupe.DataStore;
 import com.example.pr_1_file_dupe.FileData;
+
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public class FileScanner {
 
     private int skippedCount = 0;
-    private int throttleCounter = 0; // Throttles UI updates to prevent freezing
+    private int throttleCounter = 0;
+    private int totalFilesScanned = 0; 
+    
+    private Set<Long> seenSizes = new HashSet<>();
+    private Set<Long> duplicateSizes = new HashSet<>();
 
-    /**
-     * 🔥 FULL SYSTEM SCAN - Scans all user-accessible drives
-     */
-    public List<FileData> scanFullSystem(Consumer<String> progressCallback) {
-        List<FileData> allFiles = new ArrayList<>();
-        File[] roots = File.listRoots();
-        
-        if (progressCallback != null) {
-            progressCallback.accept("0:::Detecting system drives...");
-        }
+    // 🔥 THE FIX: The Soft Cancel flag requested by your DashboardController
+    private volatile boolean isCancelled = false;
 
-        System.out.println("🔍 Starting FULL SYSTEM SCAN...");
-        System.out.println("📂 Detected " + roots.length + " drive(s)");
-        
-        for (File root : roots) {
-            // 🔥 LISTEN FOR CANCEL: Stop moving to the next drive if cancelled
-            if (Thread.currentThread().isInterrupted()) break;
-            
-            System.out.println("Scanning: " + root.getAbsolutePath());
-            allFiles.addAll(scanDirectory(root.getAbsolutePath(), progressCallback));
-        }
-        
-        System.out.println("✅ System scan complete: " + allFiles.size() + " files found");
-        return allFiles;
+    public void stopGracefully() {
+        this.isCancelled = true;
     }
 
-    public List<FileData> scanDirectory(String path, Consumer<String> progressCallback) {
-        List<FileData> fileList = new ArrayList<>();
-        File root = new File(path);
-
-        if (!root.exists()) {
-            System.out.println("Path does not exist!");
-            return fileList;
-        }
-
-        // Load settings once
+    public List<FileData> scanFullSystem(Consumer<String> progressCallback) {
+        totalFilesScanned = 0; 
+        skippedCount = 0;
+        seenSizes.clear();
+        duplicateSizes.clear();
+        isCancelled = false;
+        
+        File[] roots = File.listRoots();
         DataStore store = new DataStore();
         boolean skipHidden = store.isSkipHidden();
         long minSizeInBytes = store.getMinFileSizeKB() * 1024;
 
-        // Start recursive scan
-        scanRecursive(root, fileList, skipHidden, minSizeInBytes, progressCallback);
+        System.out.println("🔍 Starting ENTERPRISE TWO-PASS SYSTEM SCAN...");
         
-        System.out.println("--- SCAN SUMMARY ---");
-        System.out.println("Files successfully read: " + fileList.size());
-        System.out.println("Files skipped (settings/permissions): " + skippedCount);
+        // ==========================================
+        // 🔥 PASS 1: Indexing Sizes
+        // ==========================================
+        if (progressCallback != null) progressCallback.accept("0:::PASS 1: Indexing file sizes to save memory...");
         
-        return fileList;
+        for (File root : roots) {
+            if (isCancelled) break;
+            passOneRecursive(root, skipHidden, minSizeInBytes, progressCallback);
+        }
+        
+        seenSizes.clear(); // Free up memory
+        
+        // If cancelled during Pass 1, we have no paths to show yet.
+        if (isCancelled && duplicateSizes.isEmpty()) {
+            if (progressCallback != null) progressCallback.accept("0:::Scan cancelled before paths could be collected.");
+            return new ArrayList<>();
+        }
+
+        // ==========================================
+        // 🔥 PASS 2: Collecting Paths
+        // ==========================================
+        if (progressCallback != null) progressCallback.accept("0:::PASS 2: Collecting matching files...");
+        
+        List<FileData> potentialDuplicates = new ArrayList<>();
+        
+        for (File root : roots) {
+            if (isCancelled) break; // If cancelled in Pass 2, it will still return what it found!
+            passTwoRecursive(root, potentialDuplicates, skipHidden, minSizeInBytes, progressCallback);
+        }
+        
+        if (isCancelled && progressCallback != null) {
+            progressCallback.accept("0:::Scan Stopped. Loading partial results...");
+        }
+        
+        duplicateSizes.clear(); 
+        return potentialDuplicates;
     }
 
-    private void scanRecursive(File folder, List<FileData> fileList, 
-                               boolean skipHidden, long minSizeInBytes, Consumer<String> progressCallback) {
-        try {
-            // 🔥 LISTEN FOR CANCEL: Stop recursion immediately if the user clicked cancel
-            if (Thread.currentThread().isInterrupted()) return;
+    public List<FileData> scanDirectory(String path, Consumer<String> progressCallback) {
+        totalFilesScanned = 0; 
+        skippedCount = 0;
+        seenSizes.clear();
+        duplicateSizes.clear();
+        isCancelled = false;
+        
+        File root = new File(path);
+        if (!root.exists()) return new ArrayList<>();
 
-            // 🛡️ DEFENSE 1: Skip symbolic links
-            if (java.nio.file.Files.isSymbolicLink(folder.toPath())) {
-                skippedCount++;
-                return;
-            }
-            
-            // 🛡️ DEFENSE 2: Skip system-protected directories
-            String folderName = folder.getName().toLowerCase();
-            if (folderName.equals("windows") || 
-                folderName.equals("system32") ||
-                folderName.equals("$recycle.bin") ||
-                folderName.equals("system volume information") ||
-                folderName.equals("programdata") ||
-                folderName.equals("program files") ||
-                folderName.equals("program files (x86)") ||
-                folderName.equals(".android") ||
-                folderName.equals("appdata") ||
-                folderName.equals("boot") ||
-                folderName.equals("dev") ||
-                folderName.equals("proc") ||
-                folderName.equals("sys") ||
-                folderName.equals("run") ||
-                folderName.equals("snap")) {
-                skippedCount++;
-                return;
-            }
+        DataStore store = new DataStore();
+        boolean skipHidden = store.isSkipHidden();
+        long minSizeInBytes = store.getMinFileSizeKB() * 1024;
 
-            File[] files = folder.listFiles();
-            
-            // 🛡️ DEFENSE 3: Permission denied or locked folder
-            if (files == null) {
-                skippedCount++;
-                return;
-            }
+        if (progressCallback != null) progressCallback.accept("0:::PASS 1: Indexing file sizes...");
+        passOneRecursive(root, skipHidden, minSizeInBytes, progressCallback);
+        
+        seenSizes.clear(); 
+        
+        if (progressCallback != null) progressCallback.accept("0:::PASS 2: Collecting matching files...");
+        List<FileData> potentialDuplicates = new ArrayList<>();
+        passTwoRecursive(root, potentialDuplicates, skipHidden, minSizeInBytes, progressCallback);
+        
+        duplicateSizes.clear();
+        return potentialDuplicates;
+    }
 
-            for (File file : files) {
-                // 🔥 LISTEN FOR CANCEL: Stop checking files if cancelled
-                if (Thread.currentThread().isInterrupted()) return;
+    // ==========================================
+    // RECURSIVE LOGIC: PASS 1
+    // ==========================================
+    private void passOneRecursive(File folder, boolean skipHidden, long minSizeInBytes, Consumer<String> progressCallback) {
+        if (isCancelled) return; // 🔥 Graceful stop check
+        if (!isAllowedFolder(folder)) return;
 
-                try {
-                    // Skip hidden files if enabled
-                    if (skipHidden && file.isHidden()) {
-                        skippedCount++;
-                        continue;
-                    }
+        File[] files = folder.listFiles();
+        if (files == null) { skippedCount++; return; }
 
-                    if (file.isDirectory()) {
-                        scanRecursive(file, fileList, skipHidden, minSizeInBytes, progressCallback);
-                    } else {
-                        // 🛡️ DEFENSE 4: Skip locked/unreadable files
-                        if (!file.canRead()) {
-                            skippedCount++;
-                            continue;
-                        }
-                        
-                        long size = file.length();
-                        
-                        // Skip files below minimum size
-                        if (size < minSizeInBytes) {
-                            skippedCount++;
-                            continue;
-                        }
+        for (File file : files) {
+            if (isCancelled) return;
 
-                        String name = file.getName();
-                        String fullPath = file.getAbsolutePath();
-                        String type = getFileExtension(name);
+            try {
+                if (skipHidden && file.isHidden()) { skippedCount++; continue; }
 
-                        fileList.add(new FileData(name, type, size, fullPath));
-
-                        // 🔥 WINDOWS THROTTLE: Send both count AND path separated by ":::"
-                        throttleCounter++;
-                        if (throttleCounter % 40 == 0 && progressCallback != null) {
-                            progressCallback.accept(throttleCounter + ":::" + fullPath);
-                        }
-                    }
+                if (file.isDirectory()) {
+                    passOneRecursive(file, skipHidden, minSizeInBytes, progressCallback);
+                } else {
+                    if (!file.canRead()) { skippedCount++; continue; }
                     
-                } catch (SecurityException se) {
-                    skippedCount++;
+                    long size = file.length();
+                    if (size < minSizeInBytes) { skippedCount++; continue; }
+
+                    totalFilesScanned++;
+
+                    if (!seenSizes.add(size)) {
+                        duplicateSizes.add(size);
+                    }
+
+                    throttleCounter++;
+                    if (throttleCounter % 60 == 0 && progressCallback != null) {
+                        progressCallback.accept(totalFilesScanned + ":::(Pass 1) Indexing: \n" + file.getAbsolutePath());
+                    }
                 }
-            }
-            
-        } catch (Exception e) {
-            System.out.println("⚠ Skipped protected folder: " + folder.getAbsolutePath());
-            skippedCount++;
+            } catch (SecurityException se) { skippedCount++; }
         }
+    }
+
+    // ==========================================
+    // RECURSIVE LOGIC: PASS 2
+    // ==========================================
+    private void passTwoRecursive(File folder, List<FileData> fileList, boolean skipHidden, long minSizeInBytes, Consumer<String> progressCallback) {
+        if (isCancelled) return; // 🔥 Graceful stop check
+        if (!isAllowedFolder(folder)) return;
+
+        File[] files = folder.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            if (isCancelled) return;
+
+            try {
+                if (skipHidden && file.isHidden()) continue;
+
+                if (file.isDirectory()) {
+                    passTwoRecursive(file, fileList, skipHidden, minSizeInBytes, progressCallback);
+                } else {
+                    if (!file.canRead()) continue;
+                    
+                    long size = file.length();
+                    if (size < minSizeInBytes) continue;
+
+                    if (duplicateSizes.contains(size)) {
+                        String name = file.getName();
+                        fileList.add(new FileData(name, getFileExtension(name), size, file.getAbsolutePath()));
+                    }
+
+                    throttleCounter++;
+                    if (throttleCounter % 60 == 0 && progressCallback != null) {
+                        progressCallback.accept(totalFilesScanned + ":::(Pass 2) Collecting: " + file.getAbsolutePath());
+                    }
+                }
+            } catch (SecurityException se) {}
+        }
+    }
+
+    // ==========================================
+    // SHARED DEFENSE MECHANISM (Linux Snap & Timeshift Fix)
+    // ==========================================
+    private boolean isAllowedFolder(File folder) {
+        if (java.nio.file.Files.isSymbolicLink(folder.toPath())) {
+            skippedCount++; 
+            return false;
+        }
+        
+        // 🔥 THE FIX: Aggressive Linux path checking. 
+        // This stops it from falling into the infinite /snap and /timeshift loops.
+        String absPath = folder.getAbsolutePath().toLowerCase();
+        if (absPath.contains("/snap/") || absPath.contains("/run/") || 
+            absPath.contains("/proc/") || absPath.contains("/sys/") || 
+            absPath.contains("/dev/") || absPath.contains("/timeshift/")) {
+            skippedCount++;
+            return false;
+        }
+        
+        String name = folder.getName().toLowerCase();
+        if (name.equals("windows") || name.equals("system32") || 
+            name.equals("$recycle.bin") || name.equals("system volume information") ||
+            name.equals("programdata") || name.equals("program files") || 
+            name.equals("program files (x86)") || name.equals(".android") || 
+            name.equals("appdata") || name.equals("boot") || name.equals("timeshift")) {
+            skippedCount++; 
+            return false;
+        }
+        return true;
     }
 
     public int getSkippedCount() {
@@ -161,9 +219,7 @@ public class FileScanner {
 
     private String getFileExtension(String fileName) {
         int lastDotIndex = fileName.lastIndexOf('.');
-        if (lastDotIndex == -1 || lastDotIndex == fileName.length() - 1) {
-            return "unknown";
-        }
+        if (lastDotIndex == -1 || lastDotIndex == fileName.length() - 1) return "unknown";
         return fileName.substring(lastDotIndex + 1);
     }
 }
