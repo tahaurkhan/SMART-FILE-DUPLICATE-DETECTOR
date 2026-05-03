@@ -7,7 +7,7 @@
     <groupId>com.example</groupId>
     <artifactId>PR_1_FILE_DUPE</artifactId>
     <version>1.0-SNAPSHOT</version>
-    <name>DuplicateFinder</name>
+    <name>Smart Duplicate Detector</name> 
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -109,7 +109,8 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.5.0</version> <executions>
+                        <version>3.5.0</version>
+                        <executions>
                             <execution>
                                 <id>jpackage-windows</id>
                                 <phase>package</phase>
@@ -119,14 +120,14 @@
                                     <arguments>
                                         <argument>--type</argument><argument>exe</argument>
                                         <argument>--dest</argument><argument>target/installer</argument>
-                                        <argument>--name</argument><argument>SmartFileDuplicateDetector</argument>
+                                       <argument>--name</argument><argument>Smart Duplicate Detector</argument>
                                         <argument>--input</argument><argument>target/installer-input</argument>
                                         <argument>--main-jar</argument><argument>PR_1_FILE_DUPE-1.0-SNAPSHOT-shaded.jar</argument>
                                         <argument>--main-class</argument><argument>com.example.pr_1_file_dupe.Launcher</argument>
                                         <argument>--icon</argument><argument>src/main/resources/com/example/pr_1_file_dupe/img/logo.ico</argument>
                                         <argument>--win-shortcut</argument>
                                         <argument>--win-menu</argument>
-                                        <argument>--app-version</argument><argument>1.0.0</argument>
+                                        <argument>--app-version</argument><argument>1.0.1</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
@@ -143,7 +144,8 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.5.0</version> <executions>
+                        <version>3.5.0</version>
+                        <executions>
                             <execution>
                                 <id>jpackage-linux</id>
                                 <phase>package</phase>
@@ -153,12 +155,14 @@
                                     <arguments>
                                         <argument>--type</argument><argument>deb</argument>
                                         <argument>--dest</argument><argument>target/installer</argument>
-                                        <argument>--name</argument><argument>SmartFileDuplicateDetector</argument>
+                                                                               <argument>--name</argument><argument>Smart Duplicate Detector</argument>
                                         <argument>--input</argument><argument>target/installer-input</argument>
                                         <argument>--main-jar</argument><argument>PR_1_FILE_DUPE-1.0-SNAPSHOT-shaded.jar</argument>
                                         <argument>--main-class</argument><argument>com.example.pr_1_file_dupe.Launcher</argument>
+                                        
+                                        <argument>--icon</argument><argument>src/main/resources/com/example/pr_1_file_dupe/img/logo.png</argument>
                                         <argument>--linux-shortcut</argument>
-                                        <argument>--app-version</argument><argument>1.0.0</argument>
+                                        <argument>--app-version</argument><argument>1.0.1</argument>
                                     </arguments>
                                 </configuration>
                             </execution>

@@ -5,7 +5,6 @@ import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
-import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 
 import java.util.List;
@@ -20,7 +19,6 @@ public class DashboardController {
     @FXML private Label     groupsFoundLabel;
     @FXML private Label     scannedCountLabel;
     
-    // 🔥 WINDOWS ANIMATION CONTROLS
     @FXML private ProgressBar scanProgressBar;
     @FXML private Label       scanDetailsLabel;
     @FXML private Label       scanCountLabel;
@@ -28,20 +26,17 @@ public class DashboardController {
     public static Map<String, List<FileData>> lastScanResults;
     private Tooltip pathTooltip;
     
-    // 🔥 TRACKS THE ACTIVE SCAN SO WE CAN CANCEL IT
     private Task<Map<String, List<FileData>>> currentScanTask;
 
     @FXML
     public void initialize() {
         DataStore store = new DataStore();
 
-        // Load and display saved folder path
         String lastFolder = store.getLastFolder();
         if (lastFolder != null && !lastFolder.isEmpty()) {
             pathInputField.setText(lastFolder);
         }
 
-        // Add tooltip
         pathTooltip = new Tooltip();
         pathTooltip.setShowDelay(javafx.util.Duration.seconds(1));
         Tooltip.install(pathInputField, pathTooltip);
@@ -52,7 +47,6 @@ public class DashboardController {
             }
         });
 
-        // Display stats
         long savedBytes = Long.parseLong(store.getTotalSaved());
         String formattedSize = (savedBytes >= 1024L * 1024 * 1024)
                 ? String.format("%.1f GB", savedBytes / (1024.0 * 1024 * 1024))
@@ -107,7 +101,6 @@ public class DashboardController {
 
         System.out.println("🔍 Initializing scanner for: " + targetFolder);
 
-        // add sound program
         com.example.pr_1_file_dupe.utils.SoundManager.play(com.example.pr_1_file_dupe.utils.SoundManager.Sound.SCAN_START);
         
         currentScanTask = new Task<>() {
@@ -116,11 +109,12 @@ public class DashboardController {
                 FileScanner scanner = new FileScanner();
                 List<FileData> scannedFiles = scanner.scanDirectory(targetFolder, path -> updateMessage(path));
                 
-                // 🔥 Stop if user clicked cancel during the scan phase
                 if (isCancelled()) return null;
                 
                 updateMessage("0:::Analyzing hashes for duplicates...");
-                return new DuplicateFinder().findDuplicates(scannedFiles);
+                
+                // 🔥 FIXED: Pass progress callback to DuplicateFinder!
+                return new DuplicateFinder().findDuplicates(scannedFiles, path -> updateMessage(path));
             }
         };
 
@@ -163,11 +157,12 @@ public class DashboardController {
                 FileScanner scanner = new FileScanner();
                 List<FileData> scannedFiles = scanner.scanFullSystem(path -> updateMessage(path));
                 
-                // 🔥 Stop if user clicked cancel during the scan phase
                 if (isCancelled()) return null;
                 
                 updateMessage("0:::Analyzing hashes for duplicates...");
-                return new DuplicateFinder().findDuplicates(scannedFiles);
+                
+                // 🔥 FIXED: Pass progress callback to DuplicateFinder!
+                return new DuplicateFinder().findDuplicates(scannedFiles, path -> updateMessage(path));
             }
         };
 
@@ -187,7 +182,6 @@ public class DashboardController {
             loadingBox.setVisible(false);
             scanButton.setDisable(false);
 
-            // Show completion popup first
             Alert alert = new Alert(Alert.AlertType.INFORMATION);
             alert.setTitle("System Scan Complete");
             alert.setHeaderText("✅ Full system scan complete!");
@@ -198,7 +192,6 @@ public class DashboardController {
             );
             alert.showAndWait();
 
-            // 🔥 SAFELY SWITCH SCREENS USING YOUR MAIN CONTROLLER
             try {
                 javafx.scene.layout.BorderPane root = (javafx.scene.layout.BorderPane) pathInputField.getScene().getRoot();
                 javafx.scene.control.Button btnDup = (javafx.scene.control.Button) root.lookup("#btnDuplicates");
@@ -218,14 +211,12 @@ public class DashboardController {
         t.start();
     }
     
-    // 🔥 METHOD TO CANCEL SCAN SAFELY
     @FXML
     public void cancelScan(ActionEvent event) {
         if (currentScanTask != null && currentScanTask.isRunning()) {
             System.out.println("🛑 Scan cancelled by user.");
-            currentScanTask.cancel(true); // Sends the interrupt signal to the thread
+            currentScanTask.cancel(true);
             
-            // Roll back the UI immediately
             loadingBox.setVisible(false);
             scanButton.setDisable(false);
             if (scanDetailsLabel != null) scanDetailsLabel.textProperty().unbind();
@@ -268,13 +259,11 @@ public class DashboardController {
     }
 
     private void handleScanSuccess(Task<Map<String, List<FileData>>> scanTask) {
-        // 🔥 Ensure we don't try to load results if it was cancelled
         if (scanTask.isCancelled() || scanTask.getValue() == null) return;
         
         Map<String, List<FileData>> duplicates = scanTask.getValue();
         lastScanResults = duplicates;
 
-        // Update session stats
         int totalFiles = duplicates.values().stream().mapToInt(List::size).sum();
         new DataStore().updateStats(0, duplicates.size(), totalFiles);
 
@@ -286,7 +275,6 @@ public class DashboardController {
             scanDetailsLabel.textProperty().unbind();
         }
 
-        // Play completion sound
         com.example.pr_1_file_dupe.utils.SoundManager.play(com.example.pr_1_file_dupe.utils.SoundManager.Sound.SCAN_COMPLETE);
 
         try {
@@ -299,7 +287,6 @@ public class DashboardController {
     }   
 
     private void handleScanFailure(Task<Map<String, List<FileData>>> scanTask) {
-        // 🔥 If the failure was due to user cancellation, ignore the error
         if (scanTask.isCancelled()) return;
         
         loadingBox.setVisible(false);
